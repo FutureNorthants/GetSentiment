@@ -16,6 +16,9 @@ using System.Net;
 using System.Text.Json;
 using Amazon.Comprehend;
 using Amazon.Comprehend.Model;
+using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
+using System.Net.NetworkInformation;
 
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.Json.JsonSerializer))]
 
@@ -31,6 +34,7 @@ namespace GetSentiment
         private static String taskToken;
         private static String cxmEndPoint;
         private static String cxmAPIKey;
+        private static String tableName = "MailBotCasesTest";
         private Secrets secrets;
         private CaseDetails caseDetails;
 
@@ -43,6 +47,18 @@ namespace GetSentiment
                 JObject o = JObject.Parse(input.ToString());
                 caseReference = (string)o.SelectToken("CaseReference");
                 taskToken = (string)o.SelectToken("TaskToken");
+                try
+                {
+                    if (context.InvokedFunctionArn.ToLower().Contains("prod"))
+                    {
+                        Console.WriteLine("Prod version");
+                        tableName = "MailBotCasesLive";
+                    }
+                }
+                catch (Exception)
+                {
+                }
+
                 switch (instance.ToLower())
                 {
                     case "live":
@@ -94,7 +110,7 @@ namespace GetSentiment
             try
             {
                 response.EnsureSuccessStatusCode();
-                return true;
+                return await StoreSentimentToDynamoAsync(caseReference, sentiment.sentimentRating);
             }
             catch (Exception error)
             {
@@ -175,7 +191,7 @@ namespace GetSentiment
                 };
                 DetectSentimentResponse detectSentimentResponse = await comprehendClient.DetectSentimentAsync(detectSentimentRequest);
                 caseSentiment.success = true;
-                caseSentiment.sentimentRating = detectSentimentResponse.Sentiment;
+                caseSentiment.sentimentRating = detectSentimentResponse.Sentiment.ToString().ToLower();
                 caseSentiment.sentimentMixed = ((int)(detectSentimentResponse.SentimentScore.Mixed*100)).ToString();
                 caseSentiment.sentimentNegative = ((int)(detectSentimentResponse.SentimentScore.Negative * 100)).ToString();
                 caseSentiment.sentimentNeutral = ((int)(detectSentimentResponse.SentimentScore.Neutral * 100)).ToString();
@@ -234,6 +250,40 @@ namespace GetSentiment
                 Console.WriteLine("ERROR : SendFailureAsync : " + error.StackTrace);
             }
             await Task.CompletedTask;
+        }
+
+        private async Task<Boolean> StoreSentimentToDynamoAsync(String caseReference, String sentiment)
+        {
+            try
+            {
+                AmazonDynamoDBClient dynamoDBClient = new AmazonDynamoDBClient(primaryRegion);
+                UpdateItemRequest dynamoRequest = new UpdateItemRequest
+                {
+                    TableName = tableName,
+                    Key = new Dictionary<string, AttributeValue>
+                        {
+                              { "CaseReference", new AttributeValue { S = caseReference }}
+                        },
+                    ExpressionAttributeNames = new Dictionary<string, string>()
+                    {
+                        {"#Field", "ProposedSentiment"}
+                    },
+                    ExpressionAttributeValues = new Dictionary<string, AttributeValue>()
+                    {
+                        {":Value",new AttributeValue {S = sentiment}}
+                    },
+
+                    UpdateExpression = "SET #Field = :Value"
+                };
+                await dynamoDBClient.UpdateItemAsync(dynamoRequest);
+                return true;
+            }
+            catch (Exception error)
+            {
+                Console.WriteLine("ERROR : StoreContactToDynamoDB :" + error.Message);
+                Console.WriteLine(error.StackTrace);
+                return false;
+            }
         }
 
     }
