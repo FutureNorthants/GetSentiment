@@ -43,15 +43,16 @@ namespace GetSentiment
         {
             if (await GetSecrets())
             {
-                String instance = Environment.GetEnvironmentVariable("instance");
                 JObject o = JObject.Parse(input.ToString());
                 caseReference = (string)o.SelectToken("CaseReference");
                 taskToken = (string)o.SelectToken("TaskToken");
+                Boolean liveInstance = false;
                 try
                 {
                     if (context.InvokedFunctionArn.ToLower().Contains("prod"))
                     {
                         Console.WriteLine("Prod version");
+                        liveInstance = true;
                         tableName = "MailBotCasesLive";
                     }
                 }
@@ -59,32 +60,27 @@ namespace GetSentiment
                 {
                 }
 
-                switch (instance.ToLower())
+                if (liveInstance)
                 {
-                    case "live":
-                        cxmEndPoint = secrets.cxmEndPointLive;
-                        cxmAPIKey = secrets.cxmAPIKeyLive;
-                        caseDetails= await GetCustomerContactAsync();
-                        Sentiment sentimentLive = await GetSentimentFromAWSAsync(caseDetails.customerContact);
-                        if (await UpdateCaseDetailsAsync(sentimentLive))
-                        {
-                            await SendSuccessAsync();
-                        }
-                        break;
-                    case "test":
-                        cxmEndPoint = secrets.cxmEndPointTest;
-                        cxmAPIKey = secrets.cxmAPIKeyTest;
-                        caseDetails = await GetCustomerContactAsync();
-                        Sentiment sentimentTest = await GetSentimentFromAWSAsync(caseDetails.customerContact);
-                        if (await UpdateCaseDetailsAsync(sentimentTest))
-                        {
-                            await SendSuccessAsync();
-                        }
-                        break;
-                    default:
-                        await SendFailureAsync("Instance not Live or Test : " + instance.ToLower(), "Lambda Parameter Error");
-                        Console.WriteLine("ERROR : Instance not Live or Test : " + instance.ToLower());
-                        break;
+                    cxmEndPoint = secrets.cxmEndPointLive;
+                    cxmAPIKey = secrets.cxmAPIKeyLive;
+                    caseDetails = await GetCustomerContactAsync();
+                    Sentiment sentimentLive = await GetSentimentFromAWSAsync(caseDetails.customerContact);
+                    if (await UpdateCaseDetailsAsync(sentimentLive))
+                    {
+                        await SendSuccessAsync();
+                    }
+                }
+                else
+                {
+                    cxmEndPoint = secrets.cxmEndPointTest;
+                    cxmAPIKey = secrets.cxmAPIKeyTest;
+                    caseDetails = await GetCustomerContactAsync();
+                    Sentiment sentimentTest = await GetSentimentFromAWSAsync(caseDetails.customerContact);
+                    if (await UpdateCaseDetailsAsync(sentimentTest))
+                    {
+                        await SendSuccessAsync();
+                    }
                 }
             }
         }
